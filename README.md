@@ -9,6 +9,8 @@ Projet programmation parallèle
 
 Rendu rapport (2 pages avec graphique) + code date de rendu 23/05
 
+S'inspirer du prof : https://github.com/sdpython/teachcompute/tree/main/_tutoriels/cython_mat
+Cours : https://sdpython.github.io/doc/teachcompute/dev/articles/2025-05-31-route2025.html#points-particuliers
 
 **Steps**
 - Implement and benchmark the scaled dot-product attention
