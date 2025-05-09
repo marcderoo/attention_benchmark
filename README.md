@@ -2,6 +2,15 @@
 
 Projet programmation parallèle 
 
+**TO DO**
+- se renseigner pour mieux stabiliser les résultats.
+- améliorer cython
+- améliorer benchmark :
+   -ajouter hyperparamètres type block size, nb_thread aux fonctions
+   - fonction recherche active des meilleurs hyperparamètres
+- faire des beux plots des perfs et choix hyperparamètres
+- rédiger rapport
+
 **But**: 
   - battre/ s’approcher de Numpy sur le calcul de l’attention en utilisant avx(paralleliser)
   - optimiser le benchmark càd trouver les meilleurs hyper paramètres (par ex blocksize, version en le moins d’essais possible).
