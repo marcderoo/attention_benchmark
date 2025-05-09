@@ -1,54 +1,62 @@
+# cython_impl.pyx
+# distutils: language = c
+# cython: boundscheck=False, wraparound=False, nonecheck=False, cdivision=True
+
 import numpy as np
 cimport numpy as np
+from libc.math cimport exp, sqrt
+from cython.parallel import prange
+from cython cimport nogil, gil
 
+cdef np.ndarray[np.float32_t, ndim=1] softmax_row(np.ndarray[np.float32_t, ndim=1] x):
+    cdef int n = x.shape[0]
+    cdef np.ndarray[np.float32_t, ndim=1] exps = np.empty(n, dtype=np.float32)
+    cdef float max_val = x[0]
+    cdef float sum_exps = 0.0
+    cdef int i
 
-# Déclaration de la fonction externe en C++ depuis le fichier .h
-cdef extern from "attention_impl.h":
-    void attention_impl_cpp(int n_row, int n_col, int k,
-                             const float* p1, const float* p2, float* res,
-                             int block_size,
-                             int version)
-    void attention_impl_cpp(int n_row, int n_col, int k,
-                             const double* p1, const double* p2, double* res,
-                             int block_size, int version)
+    for i in range(1, n):
+        if x[i] > max_val:
+            max_val = x[i]
 
+    for i in range(n):
+        exps[i] = exp(x[i] - max_val)
+        sum_exps += exps[i]
 
-# Fonctions Cython pour gérer la multiplication
-cdef attention_c_float(const float[:, ::1] a, const float [:, ::1] b, float [:, ::1] res,
-                       int block_size, int version):
-    attention_impl_cpp(a.shape[0], b.shape[1], a.shape[0], &a[0, 0], &b[0, 0], &res[0, 0],
-                       block_size, version)
+    for i in range(n):
+        exps[i] /= sum_exps
 
+    return exps
 
-cdef attention_c_double(const double[:, ::1] a, const double[:, ::1] b, double[:, ::1] res,
-                        int block_size, int version):
-    attention_impl_cpp(a.shape[0], b.shape[1], a.shape[0], &a[0, 0], &b[0, 0], &res[0, 0],
-                       block_size, version)
+def attention(np.ndarray[np.float32_t, ndim=2] Q,
+              np.ndarray[np.float32_t, ndim=2] K,
+              np.ndarray[np.float32_t, ndim=2] V):
 
+    cdef int n = Q.shape[0]
+    cdef int d = Q.shape[1]
+    cdef int dk = V.shape[1]
 
-# Fonction principale d'appel en Python
-def _attention(np.ndarray a, np.ndarray b, block_size=16, version=0):
-    res = np.zeros((a.shape[0], b.shape[1]), dtype=a.dtype)
+    cdef np.ndarray[np.float32_t, ndim=2] out = np.zeros((n, dk), dtype=np.float32)
+    cdef float scale = 1.0 / sqrt(d)
 
-    if a.dtype == np.float32:
-        attention_c_float(a, b, res, block_size, version)
-    elif a.dtype == np.float64:
-        attention_c_double(a, b, res, block_size, version)
-    else:
-        raise NotImplementedError(f"Not implemented for dtype={a.dtype}")
-    return res
+    cdef int i, j, k
+    cdef np.ndarray[np.float32_t, ndim=1] score
+    cdef np.ndarray[np.float32_t, ndim=1] weights
 
+    for i in prange(n, nogil=True):
+        with gil:
+            score = np.zeros(n, dtype=np.float32)
 
-def attention(a, b, block_size=16, version=0):
-    """Attention mechanism simulation."""
-    assert len(a.shape) == 2 == len(b.shape), (
-        f"Only applies on matrices but a.shape={a.shape}, b.shape={b.shape}"
-    )
-    assert a.shape[1] == b.shape[0], (
-        f"Shape mismatch: a.shape={a.shape}, b.shape={b.shape}"
-    )
-    assert a.dtype == b.dtype, f"Type mismatch a.dtype={a.dtype}, b.dtype={b.dtype}"
-    assert a.flags["C_CONTIGUOUS"], "Matrix a must be contiguous"
-    assert b.flags["C_CONTIGUOUS"], "Matrix b must be contiguous"
+        for j in range(n):
+            for k in range(d):
+                score[j] += Q[i, k] * K[j, k]
+            score[j] *= scale
 
-    return _attention(a, b, block_size, version)
+        with gil:
+            weights = softmax_row(score)
+
+        for j in range(n):
+            for k in range(dk):
+                out[i, k] += weights[j] * V[j, k]
+
+    return out

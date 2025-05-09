@@ -4,7 +4,7 @@ import time
 
 from attention.numpy_impl import attention as attention_numpy
 from attention.numba_impl import attention as attention_numba
-# from attention.cython_impl import attention as attention_cython
+from attention.cython_impl import attention as attention_cython
 
 
 def bench(name, fn, Q, K, V, repeat=20, warmup=3):
@@ -27,14 +27,14 @@ def run_benchmark():
 
         t_numpy = bench("numpy", attention_numpy, Q, K, V, repeat)
         t_numba = bench("numba", attention_numba, Q, K, V, repeat)
-        # t_cython = bench("cython", attention_cython, Q, K, V, repeat)
+        t_cython = bench("cython", attention_cython, Q, K, V, repeat)
         data.append({
             "dim": dim,
             "t_numpy": t_numpy,
             "t_numba": t_numba,
-            # "t_cython": t_cython,
+            "t_cython": t_cython,
             "speedup_numba": t_numpy / t_numba,
-            # "speedup_cython": t_numpy / t_cython,
+            "speedup_cython": t_numpy / t_cython,
         })
 
     df = pd.DataFrame(data)
