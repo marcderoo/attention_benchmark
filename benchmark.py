@@ -54,5 +54,5 @@ def run_benchmark():
     print(df)
     df.to_csv("results/timings.csv", index=False)
 
-if __name__ == "main":
+if __name__ == "__main__":
     run_benchmark()

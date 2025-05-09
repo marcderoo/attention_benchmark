@@ -1,30 +1,22 @@
 import numpy as np
-from numba import njit, prange
+from numba import njit
 
 @njit
-def softmax_row(x):
-    max_val = np.max(x)
-    exps = np.exp(x - max_val)
-    return exps / np.sum(exps)
-
-@njit(parallel=True)
-def attention(Q, K, V):
-    n, d = Q.shape
-    _, dk = V.shape
-    out = np.zeros((n, dk), dtype=np.float32)
-
-    for i in prange(n):
-        score = np.zeros(n, dtype=np.float32)
-        for j in range(n):
-            for k in range(d):
-                score[j] += Q[i, k] * K[j, k]
-        for j in range(n):
-            score[j] /= np.sqrt(d)
-
-        weights = softmax_row(score)
-
-        for j in range(n):
-            for k in range(dk):
-                out[i, k] += weights[j] * V[j, k]
-
+def softmax_2d(x):
+    n, m = x.shape
+    out = np.empty((n, m), dtype=np.float32)
+    for i in range(n):
+        max_val = np.max(x[i])
+        exps = np.exp(x[i] - max_val)
+        out[i] = exps / np.sum(exps)
     return out
+
+@njit
+def attention(Q, K, V):
+    Q = Q.astype(np.float32)
+    K = K.astype(np.float32)
+    V = V.astype(np.float32)
+    d = np.float32(Q.shape[1])
+    scores = (Q @ K.T) / np.sqrt(d)
+    weights = softmax_2d(scores)
+    return weights @ V
