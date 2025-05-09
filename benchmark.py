@@ -2,6 +2,9 @@ import numpy as np
 import pandas as pd
 import time
 
+# Set the seed
+np.random.seed(42)
+
 from attention.numpy_impl import attention as attention_numpy
 from attention.numba_impl import attention as attention_numba
 from attention.cython_impl import attention as attention_cython
