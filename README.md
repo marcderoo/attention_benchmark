@@ -3,12 +3,10 @@
 Projet programmation parallèle 
 
 **TO DO**
-- se renseigner pour mieux stabiliser les résultats.
-- améliorer cython
 - améliorer benchmark :
-   -ajouter hyperparamètres type block size, nb_thread aux fonctions
-   - fonction recherche active des meilleurs hyperparamètres
-- faire des beux plots des perfs et choix hyperparamètres
+   - ajouter nb_thread ?
+   - sur numba : on peut le modifier pour qu'il parallelise et qu'il prenne en compte block_size. Necessaire ? jsp.. il est déjà bon !
+- faire des beaux plots des perfs et choix hyperparamètres
 - rédiger rapport
 
 **But**: 
@@ -18,16 +16,9 @@ Projet programmation parallèle
 
 Rendu rapport (2 pages avec graphique) + code date de rendu 23/05
 
-S'inspirer du prof : https://github.com/sdpython/teachcompute/tree/main/_tutoriels/cython_mat
-Cours : https://sdpython.github.io/doc/teachcompute/dev/articles/2025-05-31-route2025.html#points-particuliers
 
-**Steps**
-- Implement and benchmark the scaled dot-product attention
-- Implement this with NumPy as baseline and one or more parallelized versions (Numba, Cython).
-- Build a benchmark function similar to your matrix multiplication setup.
-- Start with simple hyperparameter tuning, e.g.: block_size / parallel version (e.g., naive vs. tiled)
-- Gradually move to adaptive search to minimize the number of trials needed.
-
+- S'inspirer du prof : https://github.com/sdpython/teachcompute/tree/main/_tutoriels/cython_mat
+- Cours : https://sdpython.github.io/doc/teachcompute/dev/articles/2025-05-31-route2025.html#points-particuliers
 
 
 ```
