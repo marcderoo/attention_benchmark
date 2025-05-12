@@ -108,46 +108,59 @@ def measure(fn, args, warmup: int = 5, repeat: int = 50):
     return durations
 
 # ---------------------------------------------------
-# 4. Exécution du benchmark
+# 4. Exécution du benchmark modifiée pour float32/64
 # ---------------------------------------------------
-def run_benchmark(dims=None, repeat: int = 50, warmup: int = 5, output_csv: str = "results/timings.csv"):
+def run_benchmark(dims=None, repeat: int = 50, warmup: int = 5, output_dir: str = "results"):
     if dims is None:
         dims = [64, 128, 256, 400, 512, 768, 1024]
 
-    data = []
-    for dim in dims:
-        print(f"Benchmark pour dim={dim}")
-        Q = np.random.rand(dim, dim).astype(np.float32)
-        K = np.random.rand(dim, dim).astype(np.float32)
-        V = np.random.rand(dim, dim).astype(np.float32)
+    os.makedirs(output_dir, exist_ok=True)
 
-        times_np = measure(attention_numpy, (Q, K, V), warmup, repeat)
-        times_nb = measure(attention_numba, (Q, K, V), warmup, repeat)
-        times_cy = measure(attention_cython, (Q, K, V), warmup, repeat)
+    for dtype in [np.float32, np.float64]:
+        dtype_name = "float32" if dtype == np.float32 else "float64"
+        data = []
 
-        record = {
-            "dim": dim,
-            "mean_numpy": mean(times_np),
-            "stdev_numpy": stdev(times_np),
-            "mean_numba": mean(times_nb),
-            "stdev_numba": stdev(times_nb),
-            "mean_cython": mean(times_cy),
-            "stdev_cython": stdev(times_cy),
-            "speedup_numba": mean(times_np) / mean(times_nb),
-            "speedup_cython": mean(times_np) / mean(times_cy),
-            "all_close": (
-                np.allclose(attention_numpy(Q, K, V), attention_numba(Q, K, V), atol=1e-5, rtol=1e-3)
-                and np.allclose(attention_numpy(Q, K, V), attention_cython(Q, K, V), atol=1e-5, rtol=1e-3)
-            )
-        }
-        data.append(record)
+        print(f"\n[INFO] Démarrage benchmark pour dtype = {dtype_name}\n")
 
-    df = pd.DataFrame(data)
-    print(df)
+        for dim in dims:
+            print(f"Benchmark pour dim={dim} ({dtype_name})")
+            Q = np.random.rand(dim, dim).astype(dtype)
+            K = np.random.rand(dim, dim).astype(dtype)
+            V = np.random.rand(dim, dim).astype(dtype)
 
-    os.makedirs(os.path.dirname(output_csv), exist_ok=True)
-    df.to_csv(output_csv, index=False)
-    print(f"Résultats enregistrés dans {output_csv}")
+            times_np = measure(attention_numpy, (Q, K, V), warmup, repeat)
+            times_nb = measure(attention_numba, (Q, K, V), warmup, repeat)
+            times_cy = measure(attention_cython, (Q, K, V), warmup, repeat)
+
+            try:
+                all_close = (
+                    np.allclose(attention_numpy(Q, K, V), attention_numba(Q, K, V), atol=1e-5, rtol=1e-3)
+                    and np.allclose(attention_numpy(Q, K, V), attention_cython(Q, K, V), atol=1e-5, rtol=1e-3)
+                )
+            except Exception as e:
+                all_close = False
+                print(f"[WARNING] Erreur lors de la vérification all_close: {e}")
+
+            record = {
+                "dim": dim,
+                "dtype": dtype_name,
+                "mean_numpy": mean(times_np),
+                "stdev_numpy": stdev(times_np),
+                "mean_numba": mean(times_nb),
+                "stdev_numba": stdev(times_nb),
+                "mean_cython": mean(times_cy),
+                "stdev_cython": stdev(times_cy),
+                "speedup_numba": mean(times_np) / mean(times_nb),
+                "speedup_cython": mean(times_np) / mean(times_cy),
+                "all_close": all_close
+            }
+            data.append(record)
+
+        df = pd.DataFrame(data)
+        output_csv = os.path.join(output_dir, f"timings_{dtype_name}.csv")
+        df.to_csv(output_csv, index=False)
+        print(f"\n[INFO] Résultats ({dtype_name}) enregistrés dans {output_csv}")
+        print(df)
 
 # ---------------------------------------------------
 # 5. Point d'entrée
