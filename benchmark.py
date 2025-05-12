@@ -3,20 +3,32 @@ import platform
 import time
 import numpy as np
 import pandas as pd
-from statistics import mean, stdev, median
+from statistics import mean, stdev
 
-# Ajout de psutil pour affinité CPU sous Windows
+# Ajout de psutil et resource pour gestion CPU/mémoire
 try:
     import psutil
 except ImportError:
     psutil = None
+
+try:
+    import resource  # Unix only
+except ImportError:
+    resource = None
 
 # ---------------------------------------------------
 # 1. Environnement et reproductibilité
 # ---------------------------------------------------
 np.random.seed(42)
 
-# Optionnel : pinning CPU sur cœurs 0-3
+# (1) Limitation des threads pour OpenBLAS/MKL/NumPy
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
+# (2) Limitation de l’affinité CPU à 0-3
 if platform.system() == "Linux":
     os.system("taskset -c 0-3 true")
 elif platform.system() == "Windows" and psutil:
@@ -29,6 +41,51 @@ elif platform.system() == "Windows" and psutil:
 elif platform.system() == "Windows":
     print("[INFO] Pour fixer l'affinité CPU sur Windows, installez psutil ou utilisez le Gestionnaire des tâches.")
 
+# (3) Limitation mémoire (RAM)
+MAX_RAM_MB = 2048  # Exemple : 2 Go
+max_bytes = MAX_RAM_MB * 1024 ** 2
+
+if platform.system() in ("Linux", "Darwin") and resource:
+    # Unix (Linux/macOS)
+    soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+    try:
+        resource.setrlimit(resource.RLIMIT_AS, (max_bytes, hard))
+        print(f"[INFO] Limite de mémoire fixée à {MAX_RAM_MB} MB (Unix).")
+    except ValueError:
+        print("[WARNING] Impossible de fixer la limite mémoire avec resource.")
+elif platform.system() == "Windows":
+    # Windows via Job Object (nécessite pywin32)
+    try:
+        import win32job
+        import win32process
+        import win32con
+
+        # création du Job Object
+        job = win32job.CreateJobObject(None, "")
+        info = win32job.QueryInformationJobObject(
+            job, win32job.JobObjectExtendedLimitInformation
+        )
+        # drapeaux et limite mémoire
+        info['BasicLimitInformation']['LimitFlags'] = (
+            win32job.JOB_OBJECT_LIMIT_PROCESS_MEMORY
+        )
+        info['ProcessMemoryLimit'] = max_bytes
+        win32job.SetInformationJobObject(
+            job,
+            win32job.JobObjectExtendedLimitInformation,
+            info
+        )
+        # assignation du processus courant au Job
+        hProcess = win32process.GetCurrentProcess()
+        win32job.AssignProcessToJobObject(job, hProcess)
+        print(f"[INFO] Limite de mémoire fixée à {MAX_RAM_MB} MB (Windows).")
+    except ImportError:
+        print("[WARNING] Pour limiter la RAM sur Windows, installez pywin32 (`pip install pywin32`).")
+    except Exception as e:
+        print(f"[WARNING] Impossible de fixer la limite mémoire sur Windows : {e}")
+else:
+    print("[WARNING] Limitation mémoire non supportée sur ce système.")
+
 # ---------------------------------------------------
 # 2. Implémentations d'attention
 # ---------------------------------------------------
@@ -40,15 +97,8 @@ from attention.cython_impl import attention as attention_cython
 # 3. Fonction de mesure
 # ---------------------------------------------------
 def measure(fn, args, warmup: int = 5, repeat: int = 50):
-    """
-    Mesure la durée d'exécution de fn(*args) en secondes.
-    - warmup: nombre d'appels avant mesure
-    - repeat: nombre de répétitions mesurées
-    Retourne la liste des durées.
-    """
     for _ in range(warmup):
         fn(*args)
-
     durations = []
     for _ in range(repeat):
         t0 = time.perf_counter()
@@ -79,16 +129,10 @@ def run_benchmark(dims=None, repeat: int = 50, warmup: int = 5, output_csv: str 
             "dim": dim,
             "mean_numpy": mean(times_np),
             "stdev_numpy": stdev(times_np),
-            "median_numpy": median(times_np),
-            "p95_numpy": sorted(times_np)[int(0.95 * len(times_np))],
             "mean_numba": mean(times_nb),
             "stdev_numba": stdev(times_nb),
-            "median_numba": median(times_nb),
-            "p95_numba": sorted(times_nb)[int(0.95 * len(times_nb))],
             "mean_cython": mean(times_cy),
             "stdev_cython": stdev(times_cy),
-            "median_cython": median(times_cy),
-            "p95_cython": sorted(times_cy)[int(0.95 * len(times_cy))],
             "speedup_numba": mean(times_np) / mean(times_nb),
             "speedup_cython": mean(times_np) / mean(times_cy),
             "all_close": (
