@@ -5,7 +5,7 @@ from Cython.Build import cythonize
 
 ext = Extension(
     name="attention.cython_impl",
-    sources=["attention/cython_impl.pyx"], 
+    sources=["attention/cython_impl.pyx","attention/mmat_impl.cpp"], 
     include_dirs=[numpy.get_include()],
     language="c++",
     define_macros=[("NPY_NO_DEPRECATED_API", "NPY_1_7_API_VERSION")],

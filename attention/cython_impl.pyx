@@ -4,21 +4,21 @@ import numpy as np
 cimport numpy as np
 from libc.math cimport expf, sqrtf, exp, sqrt
 
-# ----------------------
-# Softmax row helpers
-# ----------------------
+# ------------------------------------------------------------------------------
+# Compute softmax of a single row (length n) in-place: row -> softmax(row)
+# ------------------------------------------------------------------------------
 cdef inline void softmax_row_f32(float* row, int n) nogil noexcept:
     cdef int i
     cdef float max_val = row[0]
     for i in range(1, n):
         if row[i] > max_val:
             max_val = row[i]
-
+    
     cdef float sum_exp = 0.0
     for i in range(n):
         row[i] = expf(row[i] - max_val)
         sum_exp += row[i]
-
+    
     for i in range(n):
         row[i] /= sum_exp
 
@@ -37,111 +37,134 @@ cdef inline void softmax_row_f64(double* row, int n) nogil noexcept:
     for i in range(n):
         row[i] /= sum_exp
 
-# ----------------------
-# Attention core function for float32
-# ----------------------
+# ------------------------------------------------------------------------------
+# Matrix multiplication implementation
+# ------------------------------------------------------------------------------
+cdef extern from "mmat_impl.h":
+    void mmat_impl_cpp(int n_row, int n_col, int k,
+                       const float* p1, const float* p2, float* res,
+                       int block_size,
+                       int version)
+    void mmat_impl_cpp(int n_row, int n_col, int k,
+                       const double* p1, const double* p2, double* res,
+                       int block_size, int version)
+
+cdef mmat_c_float(const float[:, ::1] a, const float [:, ::1] b, float [:, ::1] res,
+                  int block_size, int version):
+    mmat_impl_cpp(a.shape[0], b.shape[1], a.shape[1], &a[0, 0], &b[0, 0], &res[0, 0],
+                  block_size, version)
+
+cdef mmat_c_double(const double[:, ::1] a, const double[:, ::1] b, double[:, ::1] res,
+                   int block_size, int version):
+    mmat_impl_cpp(a.shape[0], b.shape[1], a.shape[1], &a[0, 0], &b[0, 0], &res[0, 0],
+                  block_size, version)
+
+def mmat_impl(np.ndarray a, np.ndarray b, block_size=16, version=0):
+    res = np.zeros((a.shape[0], b.shape[1]), dtype=a.dtype)
+    if a.dtype == np.float32:
+        mmat_c_float(a, b, res, block_size, version)
+    elif a.dtype == np.float64:
+        mmat_c_double(a, b, res, block_size, version)
+    else:
+        raise NotImplementedError(f"Not implemented for dtype={a.dtype}")
+    return res
+
+def mmat(a, b, block_size=16, version=0):
+    """Matrix multiplication."""
+    assert len(a.shape) == 2 == len(b.shape), (
+        f"Only applies on matrices but a.shape={a.shape}, b.shape={b.shape}"
+    )
+    assert a.shape[1] == b.shape[0], (
+        f"Shape mismatch: a.shape={a.shape}, b.shape={b.shape}"
+    )
+    assert a.dtype == b.dtype, f"Type mismatch a.dtype={a.dtype}, b.dtype={b.dtype}"
+    assert a.flags["C_CONTIGUOUS"], "Matrix a must be contiguous"
+    assert b.flags["C_CONTIGUOUS"], "Matrix b must be contiguous"
+    return mmat_impl(a, b, block_size, version)
+
+# ------------------------------------------------------------------------------
+# Attention core functions that use mmat
+# ------------------------------------------------------------------------------
 cdef np.ndarray[np.float32_t, ndim=2] attention_f32(np.ndarray[np.float32_t, ndim=2] Q,
-                                                    np.ndarray[np.float32_t, ndim=2] K,
-                                                    np.ndarray[np.float32_t, ndim=2] V,
-                                                    int num_threads=0):
+                                                   np.ndarray[np.float32_t, ndim=2] K,
+                                                   np.ndarray[np.float32_t, ndim=2] V,
+                                                   int num_threads=0,
+                                                   int block_size=16,
+                                                   int version=1):
     cdef int n = Q.shape[0]
     cdef int d = Q.shape[1]
     cdef int dv = V.shape[1]
     cdef float scale = 1.0 / sqrtf(d)
-
-    cdef np.ndarray[np.float32_t, ndim=2] scores = np.empty((n, n), dtype=np.float32)
-    cdef np.ndarray[np.float32_t, ndim=2] output = np.zeros((n, dv), dtype=np.float32)
-
-    cdef int i, j, k
-    cdef float* q_ptr
-    cdef float* k_ptr
-    cdef float* s_ptr
-    cdef float dotp
-
-    for i in range(n):
-        q_ptr = &Q[i, 0]
-        s_ptr = &scores[i, 0]
-        for j in range(n):
-            k_ptr = &K[j, 0]
-            dotp = 0.0
-            for k in range(d):
-                dotp += q_ptr[k] * k_ptr[k]
-            s_ptr[j] = dotp * scale
-
+    
+    # Transposer K pour le produit Q @ K.T
+    cdef np.ndarray[np.float32_t, ndim=2] KT = K.transpose().copy()
+    
+    # Calcul de scores = (Q @ K.T) * scale en utilisant mmat
+    # Utiliser les paramètres block_size et version passés à la fonction
+    cdef np.ndarray[np.float32_t, ndim=2] scores = mmat_impl(Q, KT, block_size, version)
+    
+    # Appliquer le scaling
+    scores *= scale
+    
+    # Appliquer softmax sur chaque ligne
     for i in range(n):
         softmax_row_f32(&scores[i, 0], n)
-
-    cdef float* w_ptr
-    cdef float* v_ptr
-    cdef float* o_ptr
-
-    for i in range(n):
-        w_ptr = &scores[i, 0]
-        o_ptr = &output[i, 0]
-        for j in range(n):
-            v_ptr = &V[j, 0]
-            dotp = w_ptr[j]
-            for k in range(dv):
-                o_ptr[k] += dotp * v_ptr[k]
-
+    
+    # Calcul de output = scores @ V en utilisant mmat
+    # Utiliser les paramètres block_size et version passés à la fonction
+    cdef np.ndarray[np.float32_t, ndim=2] output = mmat_impl(scores, V, block_size, version)
+    
     return output
 
-# ----------------------
-# Attention core function for float64
-# ----------------------
 cdef np.ndarray[np.float64_t, ndim=2] attention_f64(np.ndarray[np.float64_t, ndim=2] Q,
-                                                    np.ndarray[np.float64_t, ndim=2] K,
-                                                    np.ndarray[np.float64_t, ndim=2] V,
-                                                    int num_threads=0):
+                                                   np.ndarray[np.float64_t, ndim=2] K,
+                                                   np.ndarray[np.float64_t, ndim=2] V,
+                                                   int num_threads=0,
+                                                   int block_size=16,
+                                                   int version=1):
     cdef int n = Q.shape[0]
     cdef int d = Q.shape[1]
     cdef int dv = V.shape[1]
     cdef double scale = 1.0 / sqrt(d)
-
-    cdef np.ndarray[np.float64_t, ndim=2] scores = np.empty((n, n), dtype=np.float64)
-    cdef np.ndarray[np.float64_t, ndim=2] output = np.zeros((n, dv), dtype=np.float64)
-
-    cdef int i, j, k
-    cdef double* q_ptr
-    cdef double* k_ptr
-    cdef double* s_ptr
-    cdef double dotp
-
-    for i in range(n):
-        q_ptr = &Q[i, 0]
-        s_ptr = &scores[i, 0]
-        for j in range(n):
-            k_ptr = &K[j, 0]
-            dotp = 0.0
-            for k in range(d):
-                dotp += q_ptr[k] * k_ptr[k]
-            s_ptr[j] = dotp * scale
-
+    
+    # Transposer K pour le produit Q @ K.T
+    cdef np.ndarray[np.float64_t, ndim=2] KT = K.transpose().copy()
+    
+    # Calcul de scores = (Q @ K.T) * scale en utilisant mmat
+    # Utiliser les paramètres block_size et version passés à la fonction
+    cdef np.ndarray[np.float64_t, ndim=2] scores = mmat_impl(Q, KT, block_size, version)
+    
+    # Appliquer le scaling
+    scores *= scale
+    
+    # Appliquer softmax sur chaque ligne
     for i in range(n):
         softmax_row_f64(&scores[i, 0], n)
-
-    cdef double* w_ptr
-    cdef double* v_ptr
-    cdef double* o_ptr
-
-    for i in range(n):
-        w_ptr = &scores[i, 0]
-        o_ptr = &output[i, 0]
-        for j in range(n):
-            v_ptr = &V[j, 0]
-            dotp = w_ptr[j]
-            for k in range(dv):
-                o_ptr[k] += dotp * v_ptr[k]
-
+    
+    # Calcul de output = scores @ V en utilisant mmat
+    # Utiliser les paramètres block_size et version passés à la fonction
+    cdef np.ndarray[np.float64_t, ndim=2] output = mmat_impl(scores, V, block_size, version)
+    
     return output
 
-# ----------------------
-# Dispatcher
-# ----------------------
-def attention(Q, K, V, int num_threads=0):
+# ------------------------------------------------------------------------------
+# Dispatcher for attention
+# ------------------------------------------------------------------------------
+def attention(Q, K, V, int num_threads=0, int block_size=32, int version=1):
+    """
+    Scaled dot-product attention using optimized matrix multiplication.
+    Q: (n, d)
+    K: (n, d)
+    V: (n, dv)
+    
+    block_size: Taille des blocs pour la multiplication matricielle
+    version: Version de l'algorithme (0 = standard, 1 = AVX)
+    
+    Returns: (n, dv)
+    """
     if Q.dtype == np.float32:
-        return attention_f32(Q, K, V, num_threads)
+        return attention_f32(Q, K, V, num_threads, block_size, version)
     elif Q.dtype == np.float64:
-        return attention_f64(Q, K, V, num_threads)
+        return attention_f64(Q, K, V, num_threads, block_size, version)
     else:
         raise TypeError("Only float32 and float64 dtypes are supported")
