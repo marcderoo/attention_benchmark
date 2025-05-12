@@ -107,12 +107,67 @@ def measure(fn, args, warmup: int = 5, repeat: int = 50):
         durations.append(t1 - t0)
     return durations
 
+
+# --------------------------------------------------------------------------
+# 4. Recherche dynamique (successive halving) des meilleurs hyperparamètres
+# --------------------------------------------------------------------------
+def find_best_block_size(Q, K, V, block_sizes, warmup=3, repeat_init=5, top_k=3, final_repeat=30):
+    """
+    Trouve dynamiquement le meilleur block_size pour attention_cython en minimisant le temps moyen.
+    
+    Étapes :
+    - Bench initial rapide pour chaque block_size
+    - On garde les top_k plus rapides
+    - On refait un bench plus long et on choisit le meilleur
+
+    Retourne : block_size optimal
+    """
+    import heapq
+
+    # Étape 1 : Benchmark initial rapide
+    perf = []
+    for bs in block_sizes:
+        try:
+            times = measure(attention_cython, (Q, K, V, bs), warmup=warmup, repeat=repeat_init)
+            avg_time = mean(times)
+            perf.append((avg_time, bs))
+        except Exception as e:
+            print(f"[WARNING] Block size {bs} échoue : {e}")
+
+    if not perf:
+        raise RuntimeError("Aucune valeur de block_size valide trouvée.")
+
+    # Étape 2 : Garde top_k meilleurs
+    top_candidates = heapq.nsmallest(top_k, perf)
+    selected = [bs for _, bs in top_candidates]
+
+    # Étape 3 : Benchmark final plus précis
+    final_results = []
+    for bs in selected:
+        try:
+            times = measure(attention_cython, (Q, K, V, bs), warmup=warmup, repeat=final_repeat)
+            avg_time = mean(times)
+            final_results.append((avg_time, bs))
+        except Exception as e:
+            print(f"[WARNING] Block size {bs} échoue au benchmark final : {e}")
+
+    if not final_results:
+        raise RuntimeError("Échec du benchmark final pour toutes les valeurs sélectionnées.")
+
+    best_time, best_bs = min(final_results)
+    print(f"[INFO] → block_size optimal trouvé : {best_bs} (temps moyen : {best_time:.6f} s)")
+    return best_bs
+
+
 # ---------------------------------------------------
-# 4. Exécution du benchmark modifiée pour float32/64
+# 5. Exécution du benchmark modifiée pour float32/64
 # ---------------------------------------------------
-def run_benchmark(dims=None, repeat: int = 50, warmup: int = 5, output_dir: str = "results"):
+def run_benchmark(dims=None, block_sizes=None, repeat: int = 50, warmup: int = 5, output_dir: str = "results"):
     if dims is None:
         dims = [64, 128, 256, 400, 512, 768, 1024]
+
+    if block_sizes is None:
+        block_sizes = [8, 16, 32, 64]
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -124,18 +179,23 @@ def run_benchmark(dims=None, repeat: int = 50, warmup: int = 5, output_dir: str 
 
         for dim in dims:
             print(f"Benchmark pour dim={dim} ({dtype_name})")
+
             Q = np.random.rand(dim, dim).astype(dtype)
             K = np.random.rand(dim, dim).astype(dtype)
             V = np.random.rand(dim, dim).astype(dtype)
 
+            # Mesure numpy et numba (sans block_size)
             times_np = measure(attention_numpy, (Q, K, V), warmup, repeat)
             times_nb = measure(attention_numba, (Q, K, V), warmup, repeat)
-            times_cy = measure(attention_cython, (Q, K, V), warmup, repeat)
+
+            # Recherche du meilleur block_size pour cython
+            best_block_size = find_best_block_size(Q, K, V, block_sizes, warmup=3, repeat_init=5, top_k=2, final_repeat=15)
+            times_cy = measure(attention_cython, (Q, K, V, 0, best_block_size), warmup, repeat)
 
             try:
                 all_close = (
                     np.allclose(attention_numpy(Q, K, V), attention_numba(Q, K, V), atol=1e-5, rtol=1e-3)
-                    and np.allclose(attention_numpy(Q, K, V), attention_cython(Q, K, V), atol=1e-5, rtol=1e-3)
+                    and np.allclose(attention_numpy(Q, K, V), attention_cython(Q, K, V, 0, best_block_size), atol=1e-5, rtol=1e-3)
                 )
             except Exception as e:
                 all_close = False
@@ -144,6 +204,7 @@ def run_benchmark(dims=None, repeat: int = 50, warmup: int = 5, output_dir: str 
             record = {
                 "dim": dim,
                 "dtype": dtype_name,
+                "best_block_size": best_block_size,
                 "mean_numpy": mean(times_np),
                 "stdev_numpy": stdev(times_np),
                 "mean_numba": mean(times_nb),
@@ -162,8 +223,9 @@ def run_benchmark(dims=None, repeat: int = 50, warmup: int = 5, output_dir: str 
         print(f"\n[INFO] Résultats ({dtype_name}) enregistrés dans {output_csv}")
         print(df)
 
+
 # ---------------------------------------------------
-# 5. Point d'entrée
+# 6. Point d'entrée
 # ---------------------------------------------------
 if __name__ == "__main__":
     run_benchmark()
