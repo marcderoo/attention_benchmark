@@ -133,7 +133,10 @@ void BlockMatrixMultiplyAVX(const float *A, const float *B, float *C, int n,
 }
 
 void mmat_impl_cpp(int n_row, int n_col, int k, const float *p1,
-                   const float *p2, float *res, int block_size, int version) {
+                   const float *p2, float *res, int block_size, int version, int nb_threads) {
+  if (nb_threads > 0) {
+    omp_set_num_threads(nb_threads);
+  }
   if (version == 0)
     BlockMatrixMultiply(p1, p2, res, n_row, k, n_col, block_size);
   else
@@ -141,7 +144,10 @@ void mmat_impl_cpp(int n_row, int n_col, int k, const float *p1,
 }
 
 void mmat_impl_cpp(int n_row, int n_col, int k, const double *p1,
-                   const double *p2, double *res, int block_size, int version) {
+                   const double *p2, double *res, int block_size, int version, int nb_threads) {
+  if (nb_threads > 0) {
+    omp_set_num_threads(nb_threads);
+  }
   if (version == 0)
     BlockMatrixMultiply(p1, p2, res, n_row, k, n_col, block_size);
   else
