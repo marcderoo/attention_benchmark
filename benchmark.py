@@ -26,16 +26,8 @@ except ImportError:
 # 1. Environnement et reproductibilité
 # ---------------------------------------------------
 np.random.seed(42)
-NUM_THREADS = 1
 
-# (1) Limitation des threads pour OpenBLAS/MKL/NumPy
-os.environ["OMP_NUM_THREADS"] = str(NUM_THREADS)
-os.environ["OPENBLAS_NUM_THREADS"] = str(NUM_THREADS)
-os.environ["MKL_NUM_THREADS"] = str(NUM_THREADS)
-os.environ["VECLIB_MAXIMUM_THREADS"] = str(NUM_THREADS)
-os.environ["NUMEXPR_NUM_THREADS"] = str(NUM_THREADS)
-
-# (2) Limitation de l’affinité CPU à 0-3
+# (1) Limitation de l’affinité CPU à 0-3
 if platform.system() == "Linux":
     os.system("taskset -c 0-3 true")
 elif platform.system() == "Windows" and psutil:
@@ -48,7 +40,7 @@ elif platform.system() == "Windows" and psutil:
 elif platform.system() == "Windows":
     print("[INFO] Pour fixer l'affinité CPU sur Windows, installez psutil ou utilisez le Gestionnaire des tâches.")
 
-# (3) Limitation mémoire (RAM)
+# (2) Limitation mémoire (RAM)
 MAX_RAM_MB = 2048  # Exemple : 2 Go
 max_bytes = MAX_RAM_MB * 1024 ** 2
 
@@ -188,6 +180,48 @@ def genetic_find_best_combo(Q, K, V, block_sizes, thread_values, dtypes, warmup=
     best_nt, best_bs, best_dtype = best_combo
     print(f"[INFO] → combo optimal : block_size={best_bs}, nb_threads={best_nt}, dtype={best_dtype} (temps moyen : {best_perf:.6f} s)")
     return best_nt, best_bs, best_dtype
+
+# def find_best_combo(Q, K, V, block_sizes, thread_values, dtypes, warmup=3, repeat_init=5, top_k=3, final_repeat=15):
+#     import heapq
+#     perf = []
+    
+#     for dtype in dtypes:
+#         Q = Q.astype(dtype)
+#         K = K.astype(dtype)
+#         V = V.astype(dtype)
+
+#         for bs in block_sizes:
+#             for nt in thread_values:
+#                 try:
+#                     times = measure(attention_cython, (Q, K, V, nt, bs), warmup=warmup, repeat=repeat_init)
+#                     avg_time = mean(times)
+#                     perf.append((avg_time, nt, bs, dtype))
+#                 except Exception as e:
+#                     print(f"[WARNING] Combo (bs={bs}, nt={nt}, dtype={dtype}) échoue : {e}")
+
+#     if not perf:
+#         raise RuntimeError("Aucune combinaison (block_size, nb_threads, dtype) valide.")
+
+#     # On garde top_k combinaisons
+#     top_candidates = heapq.nsmallest(top_k, perf)
+#     selected = [(nt, bs, dtype) for _, nt, bs, dtype in top_candidates]
+
+#     final_results = []
+#     for nt, bs, dtype in selected:
+#         Q = Q.astype(dtype)
+#         K = K.astype(dtype)
+#         V = V.astype(dtype)
+        
+#         try:
+#             times = measure(attention_cython, (Q, K, V, nt, bs), warmup=warmup, repeat=final_repeat)
+#             avg_time = mean(times)
+#             final_results.append((avg_time, nt, bs, dtype))
+#         except Exception as e:
+#             print(f"[WARNING] Combo finale échoue : {e}")
+
+#     best_time, best_nt, best_bs, best_dtype = min(final_results)
+#     print(f"[INFO] → combo optimal : block_size={best_bs}, nb_threads={best_nt}, dtype={best_dtype} (temps moyen : {best_time:.6f} s)")
+#     return best_nt, best_bs, best_dtype
 
 
 # ---------------------------------------------------
