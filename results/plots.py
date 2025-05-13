@@ -1,6 +1,8 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+import matplotlib.ticker as ticker
+from matplotlib.ticker import LogFormatter
 
 # Load summary CSV
 df = pd.read_csv("results/timings_summary.csv")
@@ -8,16 +10,15 @@ df = pd.read_csv("results/timings_summary.csv")
 # Set seaborn style
 sns.set(style="whitegrid", palette="colorblind", font_scale=1.1)
 
-# Iterate over float32 and float64
 for dtype in df["dtype"].unique():
     df_dtype = df[df["dtype"] == dtype].copy()
 
-    # Compute coefficient of variation for each implementation
+    # Compute coefficient of variation
     df_dtype["cv_numpy"]  = df_dtype["stdev_numpy"]  / df_dtype["mean_numpy"]
     df_dtype["cv_numba"]  = df_dtype["stdev_numba"]  / df_dtype["mean_numba"]
     df_dtype["cv_cython"] = df_dtype["stdev_cython"] / df_dtype["mean_cython"]
 
-    # Create the figure
+    # Create figure
     fig, axes = plt.subplots(2, 2, figsize=(18, 10))
     fig.suptitle(f"Benchmark of Attention Implementations - {dtype}", fontsize=18, y=1.03)
 
@@ -32,19 +33,18 @@ for dtype in df["dtype"].unique():
     ax1.legend()
     ax1.grid(True, linestyle="--", linewidth=0.5)
 
-    # Plot 2 - Speedups
+    # Plot 2 - Speedups (clean log scale, no scientific notation)
     ax2 = axes[0, 1]
     sns.lineplot(ax=ax2, x="dim", y="speedup_numba", data=df_dtype, label="Speedup Numba", marker="s")
     sns.lineplot(ax=ax2, x="dim", y="speedup_cython", data=df_dtype, label="Speedup Cython", marker="^")
     ax2.axhline(1, color='gray', linestyle='--', label="Baseline (NumPy)")
     ax2.set_title("Speedup Over NumPy")
     ax2.set_xlabel("Dimension")
-    ax2.set_ylabel("Speedup Factor (log scale)")
-    ax2.set_yscale("log")
+    ax2.set_ylabel("Speedup Factor")
     ax2.legend()
     ax2.grid(True, linestyle="--", linewidth=0.5)
 
-    # Plot 3 - Best Block Size and Threads
+    # Plot 3 - Best Block Size and Threads (custom grid + annotations)
     ax3 = axes[1, 0]
     sns.lineplot(ax=ax3, x="dim", y="block_size_cython", data=df_dtype, label="Best Block Size", marker="o", color="darkgreen")
     sns.lineplot(ax=ax3, x="dim", y="best_nb_threads", data=df_dtype, label="Best Thread Count", marker="D", color="darkred")
@@ -53,6 +53,12 @@ for dtype in df["dtype"].unique():
     ax3.set_ylabel("Value")
     ax3.legend()
     ax3.grid(True, linestyle="--", linewidth=0.5)
+
+    # Add manual horizontal lines with text
+    lines_to_label = [1, 2, 4, 8, 16, 32, 64]
+    for y in lines_to_label:
+        ax3.axhline(y=y, color='gray', linestyle=':', linewidth=1, alpha=0.4)
+        ax3.text(x=df_dtype["dim"].min() - 10, y=y, s=str(y), va='center', ha='right', fontsize=9, color='black')
 
     # Plot 4 - Coefficient of Variation
     ax4 = axes[1, 1]
@@ -66,5 +72,5 @@ for dtype in df["dtype"].unique():
     ax4.grid(True, linestyle="--", linewidth=0.5)
 
     plt.tight_layout()
-    plt.subplots_adjust(top=0.90)  # leave room for suptitle
+    plt.subplots_adjust(top=0.90)
     plt.show()
