@@ -5,6 +5,10 @@ import numpy as np
 import pandas as pd
 from statistics import mean, stdev
 
+from rich.console import Console
+from rich.table import Table
+from rich import box
+
 # Ajout de psutil et resource pour gestion CPU/mémoire
 try:
     import psutil
@@ -207,7 +211,7 @@ def run_benchmark(dims=None, block_sizes=None, thread_values=None, repeat: int =
 
         record = {
             "dim": dim,
-            "dtype": best_dtype,
+            "dtype": str(best_dtype).replace("<class '", "").replace("'>", ""),
             "block_size_cython": best_block_size,
             "best_nb_threads": best_nb_threads,
             "mean_numpy": mean(times_np),
@@ -228,10 +232,56 @@ def run_benchmark(dims=None, block_sizes=None, thread_values=None, repeat: int =
     df.to_csv(output_csv, index=False)
     print(f"\n[INFO] Résultats enregistrés dans {output_csv}")
 
-    # Affichage simplifié sans les stdev pour la console
-    print(df.drop(columns=["stdev_numpy", "stdev_numba", "stdev_cython"]))
+    # Création des colonnes formatées avec notation scientifique et ± std
+    for method in ['numpy', 'numba', 'cython']:
+        df[f"{method.capitalize()}"] = df.apply(
+            lambda row: f"{row[f'mean_{method}']:.2e}", axis=1
+        )
 
+    # Optionnel : suppression des colonnes séparées mean/stdev
+    df_display = df.drop(columns=[
+        "mean_numpy", "stdev_numpy",
+        "mean_numba", "stdev_numba",
+        "mean_cython", "stdev_cython"
+    ])
 
+    # Réorganisation optionnelle des colonnes pour l’affichage
+    cols = ['dim', 'dtype', 'block_size_cython', 'best_nb_threads',
+            'Numpy', 'Numba', 'Cython',
+            'speedup_numba', 'speedup_cython', 'all_close']
+
+    df_display = df_display[cols]
+
+    # Crée une console Rich
+    console = Console()
+
+    # Crée une table Rich avec bordures arrondies
+    table = Table(show_header=True, header_style="bold magenta", box=box.SIMPLE_HEAVY)
+
+    # Ajoute les colonnes avec couleur personnalisée pour certaines
+    for col in df_display.columns:
+        if col in ['Numpy', 'Numba', 'Cython']:
+            table.add_column(col, style="cyan", justify="right")
+        elif col.startswith('speedup'):
+            table.add_column(" ".join([col_.capitalize() for col_ in col.split("_")]), style="green", justify="right")
+        elif col == 'all_close':
+            table.add_column(" ".join([col_.capitalize() for col_ in col.split("_")]), style="bold red", justify="center")
+        else:
+            table.add_column(" ".join([col_.capitalize() for col_ in col.split("_")]), justify="center")
+
+    # Ajoute les lignes une à une
+    for _, row in df_display.iterrows():
+        row_values = []
+        for col in df_display.columns:
+            val = row[col]
+            # Format spécifique pour speedup_numba
+            if col.startswith('speedup'):
+                val = f"{val:.3f}"
+            row_values.append(str(val))
+        table.add_row(*row_values)
+
+    # Affiche le tableau dans la console
+    console.print(table)
 
 # ---------------------------------------------------
 # 6. Point d'entrée

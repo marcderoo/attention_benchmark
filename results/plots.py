@@ -10,7 +10,12 @@ sns.set(style="whitegrid", palette="colorblind", font_scale=1.1)
 
 # Iterate over float32 and float64
 for dtype in df["dtype"].unique():
-    df_dtype = df[df["dtype"] == dtype]
+    df_dtype = df[df["dtype"] == dtype].copy()
+
+    # Compute coefficient of variation for each implementation
+    df_dtype["cv_numpy"]  = df_dtype["stdev_numpy"]  / df_dtype["mean_numpy"]
+    df_dtype["cv_numba"]  = df_dtype["stdev_numba"]  / df_dtype["mean_numba"]
+    df_dtype["cv_cython"] = df_dtype["stdev_cython"] / df_dtype["mean_cython"]
 
     # Create the figure
     fig, axes = plt.subplots(2, 2, figsize=(18, 10))
@@ -49,14 +54,14 @@ for dtype in df["dtype"].unique():
     ax3.legend()
     ax3.grid(True, linestyle="--", linewidth=0.5)
 
-    # Plot 4 - Standard Deviation
+    # Plot 4 - Coefficient of Variation
     ax4 = axes[1, 1]
-    sns.lineplot(ax=ax4, x="dim", y="stdev_numpy", data=df_dtype, label="Std NumPy", marker="o")
-    sns.lineplot(ax=ax4, x="dim", y="stdev_numba", data=df_dtype, label="Std Numba", marker="s")
-    sns.lineplot(ax=ax4, x="dim", y="stdev_cython", data=df_dtype, label="Std Cython", marker="^")
-    ax4.set_title("Execution Time Variability")
+    sns.lineplot(ax=ax4, x="dim", y="cv_numpy", data=df_dtype, label="CV NumPy", marker="o")
+    sns.lineplot(ax=ax4, x="dim", y="cv_numba", data=df_dtype, label="CV Numba", marker="s")
+    sns.lineplot(ax=ax4, x="dim", y="cv_cython", data=df_dtype, label="CV Cython", marker="^")
+    ax4.set_title("Coefficient of Variation (std / mean)")
     ax4.set_xlabel("Dimension")
-    ax4.set_ylabel("Standard Deviation (s)")
+    ax4.set_ylabel("Relative Variability")
     ax4.legend()
     ax4.grid(True, linestyle="--", linewidth=0.5)
 
