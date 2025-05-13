@@ -1,25 +1,20 @@
-# attention_benchmark
+# 🧠 Attention Benchmark
 
-Projet programmation parallèle 
+Ce projet développe une stratégie de benchmarking adaptatif pour optimiser le mécanisme d’attention :
 
-**TO DO**
-- améliorer benchmark :
-   - ajouter nb_thread ?
-   - sur numba : on peut le modifier pour qu'il parallelise et qu'il prenne en compte block_size. Necessaire ? jsp.. il est déjà bon !
-- faire des beaux plots des perfs et choix hyperparamètres
-- rédiger rapport
+$$
+\text{Attention}(Q, K, V) = \text{softmax}\left( \frac{Q K^\top}{\sqrt{d_k}} \right) V
+$$
 
-**But**: 
-  - battre/ s’approcher de Numpy sur le calcul de l’attention en utilisant avx(paralleliser)
-  - optimiser le benchmark càd trouver les meilleurs hyper paramètres (par ex blocksize, version en le moins d’essais possible).
-  - il faut obtenir le même résultat à chaque run.
+Le but est de comparer différentes implémentations (NumPy, Numba, Cython) en mesurant leur performance sur une gamme de dimensions d’entrée.  
+Pour l'implémentation Cython, le benchmark repose sur un **algorithme génétique** qui explore intelligemment l’espace des hyperparamètres 
+(nombre de threads `nb_thread`, taille de bloc `block_size`, et type flottant `dtype`) afin d’identifier les combinaisons les plus performantes.
 
-Rendu rapport (2 pages avec graphique) + code date de rendu 23/05
+L’approche adaptative permet d’obtenir automatiquement, pour chaque configuration testée, les paramètres Cython qui maximisent les performances.
 
+---
 
-- S'inspirer du prof : https://github.com/sdpython/teachcompute/tree/main/_tutoriels/cython_mat
-- Cours : https://sdpython.github.io/doc/teachcompute/dev/articles/2025-05-31-route2025.html#points-particuliers
-
+## 📁 Structure du projet
 
 ```
 attention-benchmark/
@@ -40,3 +35,58 @@ attention-benchmark/
 │   └── plots/
 ├── .gitignore
 ```
+
+---
+
+## 🚀 Installation
+
+### 1. Cloner le dépôt
+
+```bash
+git clone https://github.com/votre-utilisateur/attention-benchmark.git
+cd attention-benchmark
+```
+### 2. Installer les librairies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 2. Compiler le cython de .pyx ver .cpp
+
+```bash
+python setup.py build_ext --inplace
+```
+
+### 4. Lancer le benchmark
+
+```bash
+python run.py
+```
+
+### 5. Lancer les plots
+
+```bash
+python results/plots.py
+```
+
+---
+
+## Résultats du Benchmark
+
+Voici un aperçu des performances mesurées pour différentes tailles de matrices et types d'implémentations :
+
+#### 📊 Tableau des temps d'exécution moyens
+![Tableau des performances](results/performance_table.png)
+
+#### 📈 Graphique comparatif des implémentations
+![Graphique benchmark](results/benchmark_plots.png)
+
+
+## Contributeurs
+
+- Cournil Arnaud
+- Deroo Marc
+- Vong Laurent
+
+
