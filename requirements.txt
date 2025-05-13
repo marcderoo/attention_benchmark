@@ -3,3 +3,4 @@ pandas
 cython
 matplotlib
 numba
+rich
