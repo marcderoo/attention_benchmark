@@ -20,14 +20,14 @@ except ImportError:
 # 1. Environnement et reproductibilité
 # ---------------------------------------------------
 np.random.seed(42)
-NUM_TREAHDS = 1
+NUM_THREADS = 1
 
 # (1) Limitation des threads pour OpenBLAS/MKL/NumPy
-os.environ["OMP_NUM_THREADS"] = str(NUM_TREAHDS)
-os.environ["OPENBLAS_NUM_THREADS"] = str(NUM_TREAHDS)
-os.environ["MKL_NUM_THREADS"] = str(NUM_TREAHDS)
-os.environ["VECLIB_MAXIMUM_THREADS"] = str(NUM_TREAHDS)
-os.environ["NUMEXPR_NUM_THREADS"] = str(NUM_TREAHDS)
+os.environ["OMP_NUM_THREADS"] = str(NUM_THREADS)
+os.environ["OPENBLAS_NUM_THREADS"] = str(NUM_THREADS)
+os.environ["MKL_NUM_THREADS"] = str(NUM_THREADS)
+os.environ["VECLIB_MAXIMUM_THREADS"] = str(NUM_THREADS)
+os.environ["NUMEXPR_NUM_THREADS"] = str(NUM_THREADS)
 
 # (2) Limitation de l’affinité CPU à 0-3
 if platform.system() == "Linux":
@@ -112,60 +112,49 @@ def measure(fn, args, warmup: int = 5, repeat: int = 50):
 # --------------------------------------------------------------------------
 # 4. Recherche dynamique (successive halving) des meilleurs hyperparamètres
 # --------------------------------------------------------------------------
-def find_best_block_size(fn, Q, K, V, block_sizes, warmup=3, repeat_init=5, top_k=3, final_repeat=30):
-    """
-    Trouve dynamiquement le meilleur block_size pour attention_cython en minimisant le temps moyen.
-    
-    Étapes :
-    - Bench initial rapide pour chaque block_size
-    - On garde les top_k plus rapides
-    - On refait un bench plus long et on choisit le meilleur
-
-    Retourne : block_size optimal
-    """
+def find_best_combo(Q, K, V, block_sizes, thread_values, warmup=3, repeat_init=5, top_k=3, final_repeat=15):
     import heapq
-
-    # Étape 1 : Benchmark initial rapide
     perf = []
     for bs in block_sizes:
-        try:
-            times = measure(fn, (Q, K, V, NUM_TREAHDS, bs), warmup=warmup, repeat=repeat_init)
-            avg_time = mean(times)
-            perf.append((avg_time, bs))
-        except Exception as e:
-            print(f"[WARNING] Block size {bs} échoue : {e}")
+        for nt in thread_values:
+            try:
+                times = measure(attention_cython, (Q, K, V, nt, bs), warmup=warmup, repeat=repeat_init)
+                avg_time = mean(times)
+                perf.append((avg_time, nt, bs))
+            except Exception as e:
+                print(f"[WARNING] Combo (bs={bs}, nt={nt}) échoue : {e}")
 
     if not perf:
-        raise RuntimeError("Aucune valeur de block_size valide trouvée.")
+        raise RuntimeError("Aucune combinaison (block_size, nb_threads) valide.")
 
-    # Étape 2 : Garde top_k meilleurs
+    # On garde top_k combinaisons
     top_candidates = heapq.nsmallest(top_k, perf)
-    selected = [bs for _, bs in top_candidates]
+    selected = [(nt, bs) for _, nt, bs in top_candidates]
 
-    # Étape 3 : Benchmark final plus précis
     final_results = []
-    for bs in selected:
+    for nt, bs in selected:
         try:
-            times = measure(fn, (Q, K, V, NUM_TREAHDS, bs), warmup=warmup, repeat=final_repeat)
+            times = measure(attention_cython, (Q, K, V, nt, bs), warmup=warmup, repeat=final_repeat)
             avg_time = mean(times)
-            final_results.append((avg_time, bs))
+            final_results.append((avg_time, nt, bs))
         except Exception as e:
-            print(f"[WARNING] Block size {bs} échoue au benchmark final : {e}")
+            print(f"[WARNING] Combo finale échoue : {e}")
 
-    if not final_results:
-        raise RuntimeError("Échec du benchmark final pour toutes les valeurs sélectionnées.")
+    best_time, best_nt, best_bs = min(final_results)
+    print(f"[INFO] → combo optimal : block_size={best_bs}, nb_threads={best_nt} (temps moyen : {best_time:.6f} s)")
+    return best_nt, best_bs
 
-    best_time, best_bs = min(final_results)
-    print(f"[INFO] → block_size optimal trouvé : {best_bs} (temps moyen : {best_time:.6f} s)")
-    return best_bs
 
 
 # ---------------------------------------------------
 # 5. Exécution du benchmark modifiée pour float32/64
 # ---------------------------------------------------
-def run_benchmark(dims=None, block_sizes=None, repeat: int = 50, warmup: int = 5, output_dir: str = "results"):
+def run_benchmark(dims=None, block_sizes=None, thread_values=None, repeat: int = 50, warmup: int = 5, output_dir: str = "results"):
     if dims is None:
-        dims = [64, 128, 256, 400, 512, 768, 1024]
+        dims = [64, 128, 256, 400, 512, 768]
+
+    if thread_values is None:
+        thread_values = [1, 2, 4, 8]
 
     if block_sizes is None:
         block_sizes = [8, 16, 32, 64]
@@ -187,17 +176,16 @@ def run_benchmark(dims=None, block_sizes=None, repeat: int = 50, warmup: int = 5
 
             # Mesure numpy
             times_np = measure(attention_numpy, (Q, K, V), warmup, repeat)
-
-            times_nb = measure(attention_numba, (Q, K, V, NUM_TREAHDS), warmup, repeat)
+            times_nb = measure(attention_numba, (Q, K, V), warmup, repeat)
 
             # Recherche du meilleur block_size pour cython
-            best_block_size_cython = find_best_block_size(attention_cython, Q, K, V, block_sizes, warmup=3, repeat_init=5, top_k=2, final_repeat=15)
-            times_cy = measure(attention_cython, (Q, K, V, NUM_TREAHDS, best_block_size_cython), warmup, repeat)
+            best_nb_threads, best_block_size_cython = find_best_combo(Q, K, V, block_sizes, thread_values)
+            times_cy = measure(attention_cython, (Q, K, V, best_nb_threads, best_block_size_cython), warmup, repeat)
 
             try:
                 all_close = (
-                    np.allclose(attention_numpy(Q, K, V), attention_numba(Q, K, V, NUM_TREAHDS), atol=1e-5, rtol=1e-3)
-                    and np.allclose(attention_numpy(Q, K, V), attention_cython(Q, K, V, NUM_TREAHDS, best_block_size_cython), atol=1e-5, rtol=1e-3)
+                    np.allclose(attention_numpy(Q, K, V), attention_numba(Q, K, V), atol=1e-5, rtol=1e-3)
+                    and np.allclose(attention_numpy(Q, K, V), attention_cython(Q, K, V, best_nb_threads, best_block_size_cython), atol=1e-5, rtol=1e-3)
                 )
             except Exception as e:
                 all_close = False
@@ -207,6 +195,7 @@ def run_benchmark(dims=None, block_sizes=None, repeat: int = 50, warmup: int = 5
                 "dim": dim,
                 "dtype": dtype_name,
                 "block_size_cython": best_block_size_cython,
+                "best_nb_threads": best_nb_threads,
                 "mean_numpy": mean(times_np),
                 "stdev_numpy": stdev(times_np),
                 "mean_numba": mean(times_nb),
