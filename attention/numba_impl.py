@@ -1,36 +1,24 @@
 import numpy as np
-import numba
-from numba import njit, prange
+from numba import njit
 
-@njit(parallel=True)
-def softmax_2d(x, parallel: bool):
+@njit
+def softmax_2d(x):
     n, m = x.shape
     out = np.empty((n, m), dtype=x.dtype)
-    if parallel:
-        for i in prange(n):
-            row = x[i]
-            max_val = np.max(row)
-            exps = np.exp(row - max_val)
-            out[i] = exps / np.sum(exps)
-    else:
-        for i in range(n):
-            row = x[i]
-            max_val = np.max(row)
-            exps = np.exp(row - max_val)
-            out[i] = exps / np.sum(exps)
+    for i in range(n):
+        max_val = np.max(x[i])
+        exps = np.exp(x[i] - max_val)
+        out[i] = exps / np.sum(exps)
     return out
 
-@njit(parallel=True)
-def matmul_blocked(A, B, block_size: int, parallel: bool):
+@njit
+def matmul_blocked(A, B, block_size):
     n, m = A.shape
     m2, p = B.shape
     assert m == m2
     C = np.zeros((n, p), dtype=A.dtype)
-    if parallel:
-        i0_iter = prange(0, n, block_size)
-    else:
-        i0_iter = range(0, n, block_size)
-    for i0 in i0_iter:
+    
+    for i0 in range(0, n, block_size):
         for j0 in range(0, p, block_size):
             for k0 in range(0, m, block_size):
                 i_max = min(i0 + block_size, n)
@@ -42,49 +30,14 @@ def matmul_blocked(A, B, block_size: int, parallel: bool):
                             C[i, j] += A[i, k] * B[k, j]
     return C
 
-@njit(parallel=True)
-def _attention_impl(Q, K, V, parallel: bool, block_size: int):
-    # type: (np.ndarray, np.ndarray, np.ndarray, bool, int) -> np.ndarray
-    # ensure consistent dtype
+@njit
+def attention(Q, K, V, block_size=32):
     dtype = Q.dtype
-    Qc = Q.astype(dtype)
-    Kc = K.astype(dtype)
-    Vc = V.astype(dtype)
-    d = dtype.type(Qc.shape[1])
-
-    # compute scaled dot-product
-    scores = matmul_blocked(Qc, Kc.T, block_size, parallel) / np.sqrt(d)
-    weights = softmax_2d(scores, parallel)
-    return matmul_blocked(weights, Vc, block_size, parallel)
-
-
-def attention(Q: np.ndarray,
-              K: np.ndarray,
-              V: np.ndarray,
-              num_threads: int = 1,
-              block_size: int = 32) -> np.ndarray:
-    """
-    Compute attention: softmax(QK^T / sqrt(d)) V
-
-    Parameters
-    ----------
-    Q, K, V : np.ndarray
-        Input query, key, value matrices (shape [n, d]).
-    num_threads : int, optional
-        Number of threads to use
-    block_size : int, optional
-        Block size for the blocked matmul, by default 32.
-
-    Returns
-    -------
-    np.ndarray
-        The attention output matrix.
-    """
-    # configure Numba threading
-    if num_threads > 1:
-        numba.set_num_threads(num_threads)
-    else:
-        numba.set_num_threads(1)
-
-    # call compiled implementation
-    return _attention_impl(Q, K, V, num_threads > 1, block_size)
+    Q = Q.astype(dtype)
+    K = K.astype(dtype)
+    V = V.astype(dtype)
+    d = dtype.type(Q.shape[1])  # conversion int -> float (même type que Q)
+    
+    scores = matmul_blocked(Q, K.T, block_size) / np.sqrt(d)
+    weights = softmax_2d(scores)
+    return matmul_blocked(weights, V, block_size)

@@ -20,13 +20,14 @@ except ImportError:
 # 1. Environnement et reproductibilité
 # ---------------------------------------------------
 np.random.seed(42)
+NUM_TREAHDS = 1
 
 # (1) Limitation des threads pour OpenBLAS/MKL/NumPy
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["OMP_NUM_THREADS"] = str(NUM_TREAHDS)
+os.environ["OPENBLAS_NUM_THREADS"] = str(NUM_TREAHDS)
+os.environ["MKL_NUM_THREADS"] = str(NUM_TREAHDS)
+os.environ["VECLIB_MAXIMUM_THREADS"] = str(NUM_TREAHDS)
+os.environ["NUMEXPR_NUM_THREADS"] = str(NUM_TREAHDS)
 
 # (2) Limitation de l’affinité CPU à 0-3
 if platform.system() == "Linux":
@@ -128,7 +129,7 @@ def find_best_block_size(fn, Q, K, V, block_sizes, warmup=3, repeat_init=5, top_
     perf = []
     for bs in block_sizes:
         try:
-            times = measure(fn, (Q, K, V, bs), warmup=warmup, repeat=repeat_init)
+            times = measure(fn, (Q, K, V, NUM_TREAHDS, bs), warmup=warmup, repeat=repeat_init)
             avg_time = mean(times)
             perf.append((avg_time, bs))
         except Exception as e:
@@ -145,7 +146,7 @@ def find_best_block_size(fn, Q, K, V, block_sizes, warmup=3, repeat_init=5, top_
     final_results = []
     for bs in selected:
         try:
-            times = measure(fn, (Q, K, V, bs), warmup=warmup, repeat=final_repeat)
+            times = measure(fn, (Q, K, V, NUM_TREAHDS, bs), warmup=warmup, repeat=final_repeat)
             avg_time = mean(times)
             final_results.append((avg_time, bs))
         except Exception as e:
@@ -184,18 +185,19 @@ def run_benchmark(dims=None, block_sizes=None, repeat: int = 50, warmup: int = 5
             K = np.random.rand(dim, dim).astype(dtype)
             V = np.random.rand(dim, dim).astype(dtype)
 
-            # Mesure numpy et numba (sans block_size)
+            # Mesure numpy
             times_np = measure(attention_numpy, (Q, K, V), warmup, repeat)
-            times_nb = measure(attention_numba, (Q, K, V), warmup, repeat)
+
+            times_nb = measure(attention_numba, (Q, K, V, NUM_TREAHDS), warmup, repeat)
 
             # Recherche du meilleur block_size pour cython
-            best_block_size_cython = find_best_block_size(fn, Q, K, V, block_sizes, warmup=3, repeat_init=5, top_k=2, final_repeat=15)
-            times_cy = measure(attention_cython, (Q, K, V, 0, best_block_size_cython), warmup, repeat)
+            best_block_size_cython = find_best_block_size(attention_cython, Q, K, V, block_sizes, warmup=3, repeat_init=5, top_k=2, final_repeat=15)
+            times_cy = measure(attention_cython, (Q, K, V, NUM_TREAHDS, best_block_size_cython), warmup, repeat)
 
             try:
                 all_close = (
-                    np.allclose(attention_numpy(Q, K, V), attention_numba(Q, K, V), atol=1e-5, rtol=1e-3)
-                    and np.allclose(attention_numpy(Q, K, V), attention_cython(Q, K, V, 0, best_block_size), atol=1e-5, rtol=1e-3)
+                    np.allclose(attention_numpy(Q, K, V), attention_numba(Q, K, V, NUM_TREAHDS), atol=1e-5, rtol=1e-3)
+                    and np.allclose(attention_numpy(Q, K, V), attention_cython(Q, K, V, NUM_TREAHDS, best_block_size_cython), atol=1e-5, rtol=1e-3)
                 )
             except Exception as e:
                 all_close = False
@@ -204,7 +206,7 @@ def run_benchmark(dims=None, block_sizes=None, repeat: int = 50, warmup: int = 5
             record = {
                 "dim": dim,
                 "dtype": dtype_name,
-                "best_block_size": best_block_size,
+                "block_size_cython": best_block_size_cython,
                 "mean_numpy": mean(times_np),
                 "stdev_numpy": stdev(times_np),
                 "mean_numba": mean(times_nb),
