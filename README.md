@@ -29,7 +29,8 @@ attention-benchmark/
 │   ├── numba_impl.py            # Numba-optimized implementation
 │   ├── cython_impl.pyx          # Cython interface
 │   ├── cython_impl.cpp          # C++ implementation
-│   ├── cython_impl.h            # Header for the C++ code
+│   ├── mmat_impl.cpp            # C++ matrice multiplication
+│   ├── mmat_impl.h              
 ├── results/                     # Folder to save output CSVs, plots, etc.
 │   ├── timings_summary.csv
 │   └── plots/
