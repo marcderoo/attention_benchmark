@@ -31,7 +31,7 @@ attention-benchmark/
 │   ├── cython_impl.cpp          # C++ implementation
 │   ├── cython_impl.h            # Header for the C++ code
 ├── results/                     # Folder to save output CSVs, plots, etc.
-│   ├── timings.csv
+│   ├── timings_summary.csv
 │   └── plots/
 ├── .gitignore
 ```
