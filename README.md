@@ -19,6 +19,7 @@ L’approche adaptative permet d’obtenir automatiquement, pour chaque configur
 ```
 attention-benchmark/
 ├── README.md
+├── rapport_benchmark.pdf        # Project report
 ├── requirements.txt
 ├── setup.py
 ├── benchmark.py                 # Main benchmark script
