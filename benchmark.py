@@ -174,11 +174,9 @@ def run_benchmark(dims=None, block_sizes=None, thread_values=None, repeat: int =
             K = np.random.rand(dim, dim).astype(dtype)
             V = np.random.rand(dim, dim).astype(dtype)
 
-            # Mesure numpy
             times_np = measure(attention_numpy, (Q, K, V), warmup, repeat)
             times_nb = measure(attention_numba, (Q, K, V), warmup, repeat)
 
-            # Recherche du meilleur block_size pour cython
             best_nb_threads, best_block_size_cython = find_best_combo(Q, K, V, block_sizes, thread_values)
             times_cy = measure(attention_cython, (Q, K, V, best_nb_threads, best_block_size_cython), warmup, repeat)
 
@@ -208,11 +206,14 @@ def run_benchmark(dims=None, block_sizes=None, thread_values=None, repeat: int =
             }
             data.append(record)
 
+        # Sauvegarde CSV complet
         df = pd.DataFrame(data)
         output_csv = os.path.join(output_dir, f"timings_{dtype_name}.csv")
         df.to_csv(output_csv, index=False)
         print(f"\n[INFO] Résultats ({dtype_name}) enregistrés dans {output_csv}")
-        print(df)
+
+        # Affichage simplifié sans les stdev pour la console
+        print(df.drop(columns=["stdev_numpy", "stdev_numba", "stdev_cython"]))
 
 
 # ---------------------------------------------------
