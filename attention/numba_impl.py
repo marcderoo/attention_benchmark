@@ -61,9 +61,8 @@ def _attention_impl(Q, K, V, parallel: bool, block_size: int):
 def attention(Q: np.ndarray,
               K: np.ndarray,
               V: np.ndarray,
-              block_size: int = 32,
-              parallel: bool = False,
-              num_threads: int = 1) -> np.ndarray:
+              num_threads: int = 1,
+              block_size: int = 32) -> np.ndarray:
     """
     Compute attention: softmax(QK^T / sqrt(d)) V
 
@@ -71,12 +70,10 @@ def attention(Q: np.ndarray,
     ----------
     Q, K, V : np.ndarray
         Input query, key, value matrices (shape [n, d]).
+    num_threads : int, optional
+        Number of threads to use
     block_size : int, optional
         Block size for the blocked matmul, by default 32.
-    parallel : bool, optional
-        If True, run computation in parallel using numba.prange, else sequential.
-    num_threads : int, optional
-        Number of threads to use when parallel=True (via numba.set_num_threads).
 
     Returns
     -------
@@ -84,10 +81,10 @@ def attention(Q: np.ndarray,
         The attention output matrix.
     """
     # configure Numba threading
-    if parallel:
+    if num_threads > 1:
         numba.set_num_threads(num_threads)
     else:
         numba.set_num_threads(1)
 
     # call compiled implementation
-    return _attention_impl(Q, K, V, parallel, block_size)
+    return _attention_impl(Q, K, V, num_threads > 1, block_size)

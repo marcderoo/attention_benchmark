@@ -111,7 +111,7 @@ def measure(fn, args, warmup: int = 5, repeat: int = 50):
 # --------------------------------------------------------------------------
 # 4. Recherche dynamique (successive halving) des meilleurs hyperparamètres
 # --------------------------------------------------------------------------
-def find_best_block_size(Q, K, V, block_sizes, warmup=3, repeat_init=5, top_k=3, final_repeat=30):
+def find_best_block_size(fn, Q, K, V, block_sizes, warmup=3, repeat_init=5, top_k=3, final_repeat=30):
     """
     Trouve dynamiquement le meilleur block_size pour attention_cython en minimisant le temps moyen.
     
@@ -128,7 +128,7 @@ def find_best_block_size(Q, K, V, block_sizes, warmup=3, repeat_init=5, top_k=3,
     perf = []
     for bs in block_sizes:
         try:
-            times = measure(attention_cython, (Q, K, V, bs), warmup=warmup, repeat=repeat_init)
+            times = measure(fn, (Q, K, V, bs), warmup=warmup, repeat=repeat_init)
             avg_time = mean(times)
             perf.append((avg_time, bs))
         except Exception as e:
@@ -145,7 +145,7 @@ def find_best_block_size(Q, K, V, block_sizes, warmup=3, repeat_init=5, top_k=3,
     final_results = []
     for bs in selected:
         try:
-            times = measure(attention_cython, (Q, K, V, bs), warmup=warmup, repeat=final_repeat)
+            times = measure(fn, (Q, K, V, bs), warmup=warmup, repeat=final_repeat)
             avg_time = mean(times)
             final_results.append((avg_time, bs))
         except Exception as e:
@@ -189,8 +189,8 @@ def run_benchmark(dims=None, block_sizes=None, repeat: int = 50, warmup: int = 5
             times_nb = measure(attention_numba, (Q, K, V), warmup, repeat)
 
             # Recherche du meilleur block_size pour cython
-            best_block_size = find_best_block_size(Q, K, V, block_sizes, warmup=3, repeat_init=5, top_k=2, final_repeat=15)
-            times_cy = measure(attention_cython, (Q, K, V, 0, best_block_size), warmup, repeat)
+            best_block_size_cython = find_best_block_size(fn, Q, K, V, block_sizes, warmup=3, repeat_init=5, top_k=2, final_repeat=15)
+            times_cy = measure(attention_cython, (Q, K, V, 0, best_block_size_cython), warmup, repeat)
 
             try:
                 all_close = (
