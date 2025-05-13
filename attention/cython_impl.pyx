@@ -68,7 +68,7 @@ def mmat_impl(np.ndarray a, np.ndarray b, block_size=16, version=0, nb_threads=0
         raise NotImplementedError(f"Not implemented for dtype={a.dtype}")
     return res
 
-def mmat(a, b, block_size=16, version=0, nb_threads):
+def mmat(a, b, block_size=16, version=0, nb_threads=0):
     """Matrix multiplication."""
     assert len(a.shape) == 2 == len(b.shape), (
         f"Only applies on matrices but a.shape={a.shape}, b.shape={b.shape}"
