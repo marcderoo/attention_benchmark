@@ -112,46 +112,55 @@ def measure(fn, args, warmup: int = 5, repeat: int = 50):
 # --------------------------------------------------------------------------
 # 4. Recherche dynamique (successive halving) des meilleurs hyperparamètres
 # --------------------------------------------------------------------------
-def find_best_combo(Q, K, V, block_sizes, thread_values, warmup=3, repeat_init=5, top_k=3, final_repeat=15):
+def find_best_combo(Q, K, V, block_sizes, thread_values, dtypes, warmup=3, repeat_init=5, top_k=3, final_repeat=15):
     import heapq
     perf = []
-    for bs in block_sizes:
-        for nt in thread_values:
-            try:
-                times = measure(attention_cython, (Q, K, V, nt, bs), warmup=warmup, repeat=repeat_init)
-                avg_time = mean(times)
-                perf.append((avg_time, nt, bs))
-            except Exception as e:
-                print(f"[WARNING] Combo (bs={bs}, nt={nt}) échoue : {e}")
+    
+    for dtype in dtypes:
+        Q = Q.astype(dtype)
+        K = K.astype(dtype)
+        V = V.astype(dtype)
+
+        for bs in block_sizes:
+            for nt in thread_values:
+                try:
+                    times = measure(attention_cython, (Q, K, V, nt, bs), warmup=warmup, repeat=repeat_init)
+                    avg_time = mean(times)
+                    perf.append((avg_time, nt, bs, dtype))
+                except Exception as e:
+                    print(f"[WARNING] Combo (bs={bs}, nt={nt}, dtype={dtype}) échoue : {e}")
 
     if not perf:
-        raise RuntimeError("Aucune combinaison (block_size, nb_threads) valide.")
+        raise RuntimeError("Aucune combinaison (block_size, nb_threads, dtype) valide.")
 
     # On garde top_k combinaisons
     top_candidates = heapq.nsmallest(top_k, perf)
-    selected = [(nt, bs) for _, nt, bs in top_candidates]
+    selected = [(nt, bs, dtype) for _, nt, bs, dtype in top_candidates]
 
     final_results = []
-    for nt, bs in selected:
+    for nt, bs, dtype in selected:
+        Q = Q.astype(dtype)
+        K = K.astype(dtype)
+        V = V.astype(dtype)
+        
         try:
             times = measure(attention_cython, (Q, K, V, nt, bs), warmup=warmup, repeat=final_repeat)
             avg_time = mean(times)
-            final_results.append((avg_time, nt, bs))
+            final_results.append((avg_time, nt, bs, dtype))
         except Exception as e:
             print(f"[WARNING] Combo finale échoue : {e}")
 
-    best_time, best_nt, best_bs = min(final_results)
-    print(f"[INFO] → combo optimal : block_size={best_bs}, nb_threads={best_nt} (temps moyen : {best_time:.6f} s)")
-    return best_nt, best_bs
-
+    best_time, best_nt, best_bs, best_dtype = min(final_results)
+    print(f"[INFO] → combo optimal : block_size={best_bs}, nb_threads={best_nt}, dtype={best_dtype} (temps moyen : {best_time:.6f} s)")
+    return best_nt, best_bs, best_dtype
 
 
 # ---------------------------------------------------
-# 5. Exécution du benchmark modifiée pour float32/64
+# 5. Exécution du benchmark 
 # ---------------------------------------------------
 def run_benchmark(dims=None, block_sizes=None, thread_values=None, repeat: int = 50, warmup: int = 5, output_dir: str = "results"):
     if dims is None:
-        dims = [64, 128, 256, 400, 512, 768]
+        dims = [64, 128, 256, 400, 512, 768, 1024]
 
     if thread_values is None:
         thread_values = [1, 2, 4, 8]
@@ -161,59 +170,67 @@ def run_benchmark(dims=None, block_sizes=None, thread_values=None, repeat: int =
 
     os.makedirs(output_dir, exist_ok=True)
 
-    for dtype in [np.float32, np.float64]:
-        dtype_name = "float32" if dtype == np.float32 else "float64"
-        data = []
+    dtypes = [np.float32, np.float64]
+    
+    data = []
 
-        print(f"\n[INFO] Démarrage benchmark pour dtype = {dtype_name}\n")
+    for dim in dims:
+        print(f"Benchmark pour dim={dim}")
+        
+        # Initial Q, K, V matrices with float32 for initial testing
+        Q = np.random.rand(dim, dim).astype(np.float32)
+        K = np.random.rand(dim, dim).astype(np.float32)
+        V = np.random.rand(dim, dim).astype(np.float32)
 
-        for dim in dims:
-            print(f"Benchmark pour dim={dim} ({dtype_name})")
+        # Find the best combination of block_size, nb_threads, and dtype
+        best_nb_threads, best_block_size, best_dtype = find_best_combo(Q, K, V, block_sizes, thread_values, dtypes, warmup, repeat)
+        
+        # Now create matrices with the best dtype found
+        Q = np.random.rand(dim, dim).astype(best_dtype)
+        K = np.random.rand(dim, dim).astype(best_dtype)
+        V = np.random.rand(dim, dim).astype(best_dtype)
+        
+        # Measure performances with the selected best parameters
+        times_np = measure(attention_numpy, (Q, K, V), warmup, repeat)
+        times_nb = measure(attention_numba, (Q, K, V), warmup, repeat)
 
-            Q = np.random.rand(dim, dim).astype(dtype)
-            K = np.random.rand(dim, dim).astype(dtype)
-            V = np.random.rand(dim, dim).astype(dtype)
+        times_cy = measure(attention_cython, (Q, K, V, best_nb_threads, best_block_size), warmup, repeat)
 
-            times_np = measure(attention_numpy, (Q, K, V), warmup, repeat)
-            times_nb = measure(attention_numba, (Q, K, V), warmup, repeat)
+        try:
+            all_close = (
+                np.allclose(attention_numpy(Q, K, V), attention_numba(Q, K, V), atol=1e-5, rtol=1e-3)
+                and np.allclose(attention_numpy(Q, K, V), attention_cython(Q, K, V, best_nb_threads, best_block_size), atol=1e-5, rtol=1e-3)
+            )
+        except Exception as e:
+            all_close = False
+            print(f"[WARNING] Erreur lors de la vérification all_close: {e}")
 
-            best_nb_threads, best_block_size_cython = find_best_combo(Q, K, V, block_sizes, thread_values)
-            times_cy = measure(attention_cython, (Q, K, V, best_nb_threads, best_block_size_cython), warmup, repeat)
+        record = {
+            "dim": dim,
+            "dtype": best_dtype,
+            "block_size_cython": best_block_size,
+            "best_nb_threads": best_nb_threads,
+            "mean_numpy": mean(times_np),
+            "stdev_numpy": stdev(times_np),
+            "mean_numba": mean(times_nb),
+            "stdev_numba": stdev(times_nb),
+            "mean_cython": mean(times_cy),
+            "stdev_cython": stdev(times_cy),
+            "speedup_numba": mean(times_np) / mean(times_nb),
+            "speedup_cython": mean(times_np) / mean(times_cy),
+            "all_close": all_close
+        }
+        data.append(record)
 
-            try:
-                all_close = (
-                    np.allclose(attention_numpy(Q, K, V), attention_numba(Q, K, V), atol=1e-5, rtol=1e-3)
-                    and np.allclose(attention_numpy(Q, K, V), attention_cython(Q, K, V, best_nb_threads, best_block_size_cython), atol=1e-5, rtol=1e-3)
-                )
-            except Exception as e:
-                all_close = False
-                print(f"[WARNING] Erreur lors de la vérification all_close: {e}")
+    # Sauvegarde CSV complet
+    df = pd.DataFrame(data)
+    output_csv = os.path.join(output_dir, f"timings_summary.csv")
+    df.to_csv(output_csv, index=False)
+    print(f"\n[INFO] Résultats enregistrés dans {output_csv}")
 
-            record = {
-                "dim": dim,
-                "dtype": dtype_name,
-                "block_size_cython": best_block_size_cython,
-                "best_nb_threads": best_nb_threads,
-                "mean_numpy": mean(times_np),
-                "stdev_numpy": stdev(times_np),
-                "mean_numba": mean(times_nb),
-                "stdev_numba": stdev(times_nb),
-                "mean_cython": mean(times_cy),
-                "stdev_cython": stdev(times_cy),
-                "speedup_numba": mean(times_np) / mean(times_nb),
-                "speedup_cython": mean(times_np) / mean(times_cy),
-                "all_close": all_close
-            }
-            data.append(record)
+    # Affichage simplifié sans les stdev pour la console
+    print(df.drop(columns=["stdev_numpy", "stdev_numba", "stdev_cython"]))
 
-        # Sauvegarde CSV complet
-        df = pd.DataFrame(data)
-        output_csv = os.path.join(output_dir, f"timings_{dtype_name}.csv")
-        df.to_csv(output_csv, index=False)
-        print(f"\n[INFO] Résultats ({dtype_name}) enregistrés dans {output_csv}")
-
-        # Affichage simplifié sans les stdev pour la console
-        print(df.drop(columns=["stdev_numpy", "stdev_numba", "stdev_cython"]))
 
 
 # ---------------------------------------------------
