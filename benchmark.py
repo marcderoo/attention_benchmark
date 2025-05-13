@@ -9,6 +9,8 @@ from rich.console import Console
 from rich.table import Table
 from rich import box
 
+import random
+
 # Ajout de psutil et resource pour gestion CPU/mémoire
 try:
     import psutil
@@ -101,7 +103,7 @@ from attention.cython_impl import attention as attention_cython
 # ---------------------------------------------------
 # 3. Fonction de mesure
 # ---------------------------------------------------
-def measure(fn, args, warmup: int = 5, repeat: int = 50):
+def measure(fn, args, warmup: int = 5, repeat: int = 20):
     for _ in range(warmup):
         fn(*args)
     durations = []
@@ -114,48 +116,77 @@ def measure(fn, args, warmup: int = 5, repeat: int = 50):
 
 
 # --------------------------------------------------------------------------
-# 4. Recherche dynamique (successive halving) des meilleurs hyperparamètres
+# 4. Recherche dynamique (algorithme génétique) des meilleurs hyperparamètres
 # --------------------------------------------------------------------------
-def find_best_combo(Q, K, V, block_sizes, thread_values, dtypes, warmup=3, repeat_init=5, top_k=3, final_repeat=15):
-    import heapq
-    perf = []
-    
-    for dtype in dtypes:
-        Q = Q.astype(dtype)
-        K = K.astype(dtype)
-        V = V.astype(dtype)
+def genetic_find_best_combo(Q, K, V, block_sizes, thread_values, dtypes, warmup=2, repeat=3,
+                            population_size=6, generations=3, mutation_rate=0.4, elite_fraction=0.34):
+    # Initialiser un cache global
+    _evaluate_cache = {}
 
-        for bs in block_sizes:
-            for nt in thread_values:
-                try:
-                    times = measure(attention_cython, (Q, K, V, nt, bs), warmup=warmup, repeat=repeat_init)
-                    avg_time = mean(times)
-                    perf.append((avg_time, nt, bs, dtype))
-                except Exception as e:
-                    print(f"[WARNING] Combo (bs={bs}, nt={nt}, dtype={dtype}) échoue : {e}")
-
-    if not perf:
-        raise RuntimeError("Aucune combinaison (block_size, nb_threads, dtype) valide.")
-
-    # On garde top_k combinaisons
-    top_candidates = heapq.nsmallest(top_k, perf)
-    selected = [(nt, bs, dtype) for _, nt, bs, dtype in top_candidates]
-
-    final_results = []
-    for nt, bs, dtype in selected:
-        Q = Q.astype(dtype)
-        K = K.astype(dtype)
-        V = V.astype(dtype)
+    def evaluate(individual):
+        # Transformer l'individu en une clé immuable (tuple)
+        key = tuple(individual)
         
+        # Vérifier si le résultat est déjà dans le cache
+        if key in _evaluate_cache:
+            return _evaluate_cache[key]
+        
+        nt, bs, dtype = individual
         try:
-            times = measure(attention_cython, (Q, K, V, nt, bs), warmup=warmup, repeat=final_repeat)
-            avg_time = mean(times)
-            final_results.append((avg_time, nt, bs, dtype))
+            q = Q.astype(dtype)
+            k = K.astype(dtype)
+            v = V.astype(dtype)
+            times = measure(attention_cython, (q, k, v, nt, bs), warmup=warmup, repeat=repeat)
+            result = mean(times)
         except Exception as e:
-            print(f"[WARNING] Combo finale échoue : {e}")
+            print(f"[WARNING] Échec évaluation {individual} : {e}")
+            result = float('inf')  # Pénaliser fortement
 
-    best_time, best_nt, best_bs, best_dtype = min(final_results)
-    print(f"[INFO] → combo optimal : block_size={best_bs}, nb_threads={best_nt}, dtype={best_dtype} (temps moyen : {best_time:.6f} s)")
+        # Stocker le résultat dans le cache
+        _evaluate_cache[key] = result
+        return result
+
+    def mutate(ind):
+        nt, bs, dtype = ind
+        if random.random() < mutation_rate:
+            nt = random.choice(thread_values)
+        if random.random() < mutation_rate:
+            bs = random.choice(block_sizes)
+        if random.random() < mutation_rate:
+            dtype = random.choice(dtypes)
+        return (nt, bs, dtype)
+
+    def crossover(parent1, parent2):
+        # Croisement simple à un point
+        nt = random.choice([parent1[0], parent2[0]])
+        bs = random.choice([parent1[1], parent2[1]])
+        dtype = random.choice([parent1[2], parent2[2]])
+        return (nt, bs, dtype)
+
+    # Initialisation population
+    population = [(random.choice(thread_values),
+                   random.choice(block_sizes),
+                   random.choice(dtypes)) for _ in range(population_size)]
+
+    for gen in range(generations):
+        print(f"[INFO] Génération {gen+1}/{generations}")
+        scored_population = [(evaluate(ind), ind) for ind in population]
+        scored_population.sort()
+        elites = [ind for _, ind in scored_population[:int(elite_fraction * population_size)]]
+
+        # Remplir nouvelle population avec croisements et mutations
+        new_population = elites[:]
+        while len(new_population) < population_size:
+            parents = random.sample(elites, 2)
+            child = mutate(crossover(parents[0], parents[1]))
+            new_population.append(child)
+
+        population = new_population
+
+    # Évaluation finale
+    best_perf, best_combo = min((evaluate(ind), ind) for ind in population)
+    best_nt, best_bs, best_dtype = best_combo
+    print(f"[INFO] → combo optimal : block_size={best_bs}, nb_threads={best_nt}, dtype={best_dtype} (temps moyen : {best_perf:.6f} s)")
     return best_nt, best_bs, best_dtype
 
 
@@ -187,7 +218,7 @@ def run_benchmark(dims=None, block_sizes=None, thread_values=None, repeat: int =
         V = np.random.rand(dim, dim).astype(np.float32)
 
         # Find the best combination of block_size, nb_threads, and dtype
-        best_nb_threads, best_block_size, best_dtype = find_best_combo(Q, K, V, block_sizes, thread_values, dtypes, warmup, repeat)
+        best_nb_threads, best_block_size, best_dtype = genetic_find_best_combo(Q, K, V, block_sizes, thread_values, dtypes, warmup, repeat)
         
         # Now create matrices with the best dtype found
         Q = np.random.rand(dim, dim).astype(best_dtype)
